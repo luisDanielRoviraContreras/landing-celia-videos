@@ -105,7 +105,7 @@ onBeforeUnmount(() => {
       <div class="banner-media">
         <video
           class="banner-video"
-          :src="loaded[i] ? b.src : undefined"
+          :src="b.src"
           muted
           loop
           playsinline

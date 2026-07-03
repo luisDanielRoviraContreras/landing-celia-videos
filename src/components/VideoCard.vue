@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref } from 'vue'
 
 const props = defineProps({
   index: { type: Number, required: true },
@@ -12,27 +12,10 @@ const cardEl = ref(null)
 const videoEl = ref(null)
 const isPlaying = ref(false)
 const isLoaded = ref(false)
-// lazy: el video solo obtiene su src al acercarse al viewport
-const shouldLoad = ref(false)
-let io = null
-
-onMounted(() => {
-  io = new IntersectionObserver(
-    (entries) => {
-      if (entries[0].isIntersecting) {
-        shouldLoad.value = true
-        io.disconnect()
-      }
-    },
-    { rootMargin: '600px 0px' } // precarga ~600px antes de entrar
-  )
-  if (cardEl.value) io.observe(cardEl.value)
-})
-onBeforeUnmount(() => io?.disconnect())
 
 function play() {
   const v = videoEl.value
-  if (!v || !shouldLoad.value) return
+  if (!v) return
   v.play().then(() => (isPlaying.value = true)).catch(() => {})
 }
 
@@ -73,7 +56,7 @@ function resetTilt() {
     <div class="media" :class="{ playing: isPlaying }">
       <video
         ref="videoEl"
-        :src="shouldLoad ? src : undefined"
+        :src="src"
         muted
         loop
         playsinline
