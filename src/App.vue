@@ -17,6 +17,8 @@ import Capabilities from './components/Capabilities.vue'
 import HorizontalReel from './components/HorizontalReel.vue'
 import AboutSection from './components/AboutSection.vue'
 import HyperScroll from './components/HyperScroll.vue'
+import GamesSection from './components/GamesSection.vue'
+import VRSection from './components/VRSection.vue'
 import ContactSection from './components/ContactSection.vue'
 import GradualBlur from './components/GradualBlur.vue'
 
@@ -115,6 +117,8 @@ onBeforeUnmount(() => {
       <HorizontalReel />
       <AboutSection />
       <HyperScroll />
+      <VRSection />
+      <GamesSection />
       <ContactSection />
     </main>
 
