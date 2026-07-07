@@ -95,6 +95,8 @@ function process() {
 }
 
 onMounted(() => {
+  // táctil: sin puntero → no partir texto ni escuchar (evita scramble accidental al tocar)
+  if (window.matchMedia('(hover: none)').matches) return
   // dos frames: deja que las secciones monten su DOM antes de partir el texto
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {

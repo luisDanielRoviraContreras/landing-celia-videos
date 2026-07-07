@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   index: { type: Number, required: true },
@@ -12,6 +12,25 @@ const cardEl = ref(null)
 const videoEl = ref(null)
 const isPlaying = ref(false)
 const isLoaded = ref(false)
+
+// en táctil no hay hover: autoplay al entrar en viewport
+const isTouch = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
+const inView = ref(false)
+let io = null
+onMounted(() => {
+  if (!isTouch || !cardEl.value) return
+  io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting && e.intersectionRatio > 0.5) { inView.value = true; play() }
+        else { inView.value = false; stop() }
+      })
+    },
+    { threshold: [0, 0.5, 1] }
+  )
+  io.observe(cardEl.value)
+})
+onBeforeUnmount(() => io?.disconnect())
 
 function play() {
   const v = videoEl.value
@@ -47,6 +66,7 @@ function resetTilt() {
   <article
     ref="cardEl"
     class="card reveal"
+    :class="{ active: inView }"
     :data-reveal-delay="(index % 3) * 90"
     data-cursor="hover"
     :style="{
@@ -311,5 +331,34 @@ function resetTilt() {
   letter-spacing: 0.12em;
   color: var(--fg-dim);
   white-space: nowrap;
+}
+
+/* estado activo en táctil (equivale al hover) */
+.card.active .media {
+  border-color: transparent;
+  box-shadow: 0 24px 60px -22px rgba(0, 0, 0, 0.7);
+}
+.card.active .media video {
+  transform: scale(1.05);
+  filter: grayscale(0) brightness(1);
+}
+.card.active .card-num {
+  color: var(--accent);
+  -webkit-text-stroke: 1px transparent;
+}
+.card.active .ring {
+  opacity: 1;
+  animation: ring-spin 4s linear infinite;
+}
+.card.active .title-text {
+  background-size: 100% 2px;
+  color: var(--accent);
+}
+.card.active .title-arrow {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+.card.active .play-hint {
+  opacity: 0;
 }
 </style>

@@ -17,6 +17,10 @@ const models = {} // character, coin, obs_block, obs_high, obs_wall, obs_train
 const buildingSet = [] // edificio1..7 (modelos aleatorios de /game)
 
 // ---- constantes ----
+// móvil: baja resolución/sombra/partículas para que fluya
+const IS_MOBILE = typeof window !== 'undefined' &&
+  (window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 820)
+
 const LANES = [-2.3, 0, 2.3]
 const GRAVITY = 34
 const JUMP_V = 13          // salto más alto (permite subir al techo del tren)
@@ -454,7 +458,7 @@ function init() {
   const w = host.value.clientWidth
   const h = host.value.clientHeight
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 1.5 : 2))
   renderer.setSize(w, h)
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -489,7 +493,7 @@ function init() {
   dir.target.position.set(0, 0, -10)
   scene.add(dir.target)
   dir.castShadow = true
-  dir.shadow.mapSize.set(2048, 2048)
+  dir.shadow.mapSize.set(IS_MOBILE ? 1024 : 2048, IS_MOBILE ? 1024 : 2048)
   dir.shadow.camera.near = 1
   dir.shadow.camera.far = 110
   dir.shadow.camera.left = -22
@@ -523,7 +527,7 @@ function writeStreak(i, s) {
   speedPos[o + 3] = s.x; speedPos[o + 4] = s.y; speedPos[o + 5] = s.z + s.len
 }
 function buildSpeedLines() {
-  const M = 80
+  const M = IS_MOBILE ? 45 : 80
   speedPos = new Float32Array(M * 6)
   streaks = []
   for (let i = 0; i < M; i++) {
@@ -591,7 +595,7 @@ function softSprite(draw) {
 // estrellas, nubes y pájaros (fog:false para que la niebla no los borre)
 function buildSky() {
   // --- estrellas ---
-  const N = 320
+  const N = IS_MOBILE ? 150 : 320
   const pos = new Float32Array(N * 3)
   for (let i = 0; i < N; i++) {
     pos[i * 3] = (Math.random() * 2 - 1) * 90
@@ -1237,6 +1241,10 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   padding: clamp(0.8rem, 3vw, 1.6rem);
+  /* respeta el notch / safe area */
+  padding-top: calc(clamp(0.8rem, 3vw, 1.6rem) + env(safe-area-inset-top));
+  padding-left: calc(clamp(0.8rem, 3vw, 1.6rem) + env(safe-area-inset-left));
+  padding-right: calc(clamp(0.8rem, 3vw, 1.6rem) + env(safe-area-inset-right));
   gap: 1rem;
 }
 .rg-btn {
@@ -1499,7 +1507,7 @@ onBeforeUnmount(() => {
 
 .rg-touch {
   position: absolute;
-  bottom: clamp(1.2rem, 5vw, 2.5rem);
+  bottom: calc(clamp(1.2rem, 5vw, 2.5rem) + env(safe-area-inset-bottom));
   left: 0;
   right: 0;
   display: none;

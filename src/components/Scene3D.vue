@@ -187,7 +187,7 @@ function init() {
   camera.position.set(0, 0, 6)
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, window.matchMedia('(pointer: coarse)').matches ? 1.5 : 2))
   renderer.setSize(w, h, false)
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -405,6 +405,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@media (max-width: 640px) { .scene { height: 240vh !important; } }
 .scene {
   position: relative;
   height: 320vh;

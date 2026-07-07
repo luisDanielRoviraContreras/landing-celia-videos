@@ -124,7 +124,7 @@ function setup() {
     webgl: 2,
     alpha: true,
     antialias: false,
-    dpr: Math.min(window.devicePixelRatio || 1, 2),
+    dpr: Math.min(window.devicePixelRatio || 1, window.matchMedia('(pointer: coarse)').matches ? 1.5 : 2),
   })
   const gl = renderer.gl
   const canvas = gl.canvas

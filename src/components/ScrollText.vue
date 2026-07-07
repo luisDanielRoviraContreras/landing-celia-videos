@@ -98,6 +98,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@media (max-width: 640px) { .scrolltext { height: 210vh !important; } }
 .scrolltext {
   position: relative;
   height: 260vh;

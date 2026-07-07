@@ -67,6 +67,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@media (max-width: 640px) { .hreel { height: 260vh !important; } }
 .hreel {
   position: relative;
   height: 360vh;

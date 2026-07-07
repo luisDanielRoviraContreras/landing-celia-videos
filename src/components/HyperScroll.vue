@@ -210,6 +210,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* móvil: menos scroll muerto */
+@media (max-width: 640px) { .hyper { height: 400vh !important; } }
 .hyper {
   position: relative;
   height: 600vh;

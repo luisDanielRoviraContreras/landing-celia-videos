@@ -146,6 +146,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@media (max-width: 640px) { .pgallery { height: 300vh !important; } }
 .pgallery {
   position: relative;
   height: 420vh;

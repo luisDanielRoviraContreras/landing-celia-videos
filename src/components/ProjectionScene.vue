@@ -271,7 +271,7 @@ async function init() {
   camera.lookAt(LOOK)
 
   renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, window.matchMedia('(pointer: coarse)').matches ? 1.5 : 2))
   renderer.setSize(w, h, false)
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -379,7 +379,7 @@ function resize() {
   const { w, h } = dims()
   if (!w || !h) return
   width = w; height = h
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, window.matchMedia('(pointer: coarse)').matches ? 1.5 : 2))
   renderer.setSize(w, h, false)
   camera.aspect = w / h
   camera.updateProjectionMatrix()
@@ -447,6 +447,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@media (max-width: 640px) { .projscene { height: 230vh !important; } }
 .projscene {
   position: relative;
   height: 300vh;
