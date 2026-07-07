@@ -21,12 +21,14 @@ const LANES = [-2.3, 0, 2.3]
 const GRAVITY = 34
 const JUMP_V = 13          // salto más alto (permite subir al techo del tren)
 const JUMP_BUFFER = 0.16   // ventana pre-aterrizaje para encadenar saltos
-const LATERAL_HOLD = 0.13  // al saltar: sube recto un instante antes de ir al lado (salto inclinado)
-const SLIDE_TIME = 0.62
+const LATERAL_HOLD = 0.07  // al saltar: sube recto un instante antes de ir al lado (salto inclinado)
+const COYOTE = 0.12        // margen para saltar justo tras salir de un borde
+const HANG_MAX = 0.45      // flotación máxima en el pico del salto al mantener la tecla
+const SLIDE_TIME = 1.0
 const CHUNK_LEN = 24
 const CHUNK_COUNT = 8
 const TRACK_LEN = CHUNK_LEN * CHUNK_COUNT
-const SPAWN_Z = -92
+const SPAWN_Z = -135        // spawn lejano: emergen de la niebla, no aparecen de golpe
 const PLAYER_HALF = 0.35   // media profundidad del jugador (colisión Z)
 // modelos detallados /game (centrados en origen → rotar y subir a base)
 const COIN_SCALE = 0.385
@@ -73,8 +75,16 @@ let vy = 0
 let grounded = true
 let sliding = false
 let slideT = 0
+let slideHeld = false     // se mantiene deslizando mientras la tecla siga pulsada
+let jumpHeld = false      // mantener salto = flota en el pico (misma altura, más distancia)
+let hangT = 0             // tiempo de flotación usado en el pico
 let jumpBuffer = 0        // pulsación de salto guardada mientras estás en el aire
 let lateralHold = 0      // congela el movimiento lateral justo tras saltar (salto inclinado)
+let intro = false        // entrada: el personaje corre hacia la escena antes de controlar
+let coyoteT = 0          // margen de salto tras salir de un borde
+// banda vertical real de la valla 'high' (medida del modelo al cargar)
+let HIGH_BOTTOM = 1.0
+let HIGH_TOP = 2.6
 
 // mundo
 let speed = 13
@@ -88,6 +98,9 @@ let pavementMat = null
 let groundMat = null
 let birds = []          // pájaros animados en el cielo
 let worldT = 0          // tiempo acumulado para animaciones del cielo
+let speedLines = null   // líneas de velocidad (aire)
+let streaks = []        // datos por línea
+let speedPos = null     // buffer de posiciones de las líneas
 
 // ---------- helpers de construcción ----------
 // fondo: degradado del horizonte (tenue) a negro
@@ -387,14 +400,14 @@ function makePlayer() {
 }
 
 // transición suave entre animaciones
-function fadeTo(name, once = false) {
+function fadeTo(name, once = false, fade = 0.15) {
   const next = actions[name]
   if (!next || next === currentAction) return
   next.reset()
   next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity)
   next.clampWhenFinished = once
   next.play()
-  if (currentAction) currentAction.crossFadeTo(next, 0.15, false)
+  if (currentAction) currentAction.crossFadeTo(next, fade, false)
   currentAction = next
 }
 
@@ -422,10 +435,10 @@ function makeObstacle(laneIdx, type, z = SPAWN_Z) {
 }
 
 // cadena de 1-6 vagones pegados en el mismo carril
-function makeTrainChain(laneIdx) {
+function makeTrainChain(laneIdx, zBase = SPAWN_Z) {
   const count = 1 + Math.floor(Math.random() * 6) // 1..6
   const carLen = OBS_TRAIN_HALF * 2
-  for (let i = 0; i < count; i++) makeObstacle(laneIdx, 'train', SPAWN_Z - i * carLen)
+  for (let i = 0; i < count; i++) makeObstacle(laneIdx, 'train', zBase - i * carLen)
 }
 
 function makeCoin(laneIdx, z) {
@@ -453,7 +466,7 @@ function init() {
   scene = new THREE.Scene()
   // fondo con degradado a negro; la niebla funde la distancia al horizonte
   scene.background = backdropTexture()
-  scene.fog = new THREE.Fog(0x0a0714, 70, 165)
+  scene.fog = new THREE.Fog(0x0a0714, 60, 150)
   // acera de cemento con degradado a negro (compartida por todos los chunks)
   pavementMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 })
   pavementGeo = makePavementGeo()
@@ -461,6 +474,8 @@ function init() {
   const dirtTex = dirtTexture()
   dirtTex.repeat.set(2, CHUNK_LEN / 6)
   groundMat = new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 1 })
+  curveMaterial(groundMat)
+  curveMaterial(pavementMat)
 
   camera = new THREE.PerspectiveCamera(62, w / h, 0.1, 400)
   camera.position.set(0, 4.6, 8)
@@ -486,9 +501,80 @@ function init() {
   scene.add(dir)
 
   buildSky()
+  buildSpeedLines()
 
   clock = new THREE.Clock()
   window.addEventListener('resize', onResize)
+}
+
+// --- líneas de velocidad ---
+function spawnStreak(far) {
+  const side = Math.random() > 0.5 ? 1 : -1
+  return {
+    x: side * (3 + Math.random() * 14),      // fuera del carril central
+    y: 0.6 + Math.random() * 11,
+    z: far ? -42 - Math.random() * 26 : -42 + Math.random() * 54,
+    len: 2.5 + Math.random() * 4.5,
+  }
+}
+function writeStreak(i, s) {
+  const o = i * 6
+  speedPos[o] = s.x; speedPos[o + 1] = s.y; speedPos[o + 2] = s.z
+  speedPos[o + 3] = s.x; speedPos[o + 4] = s.y; speedPos[o + 5] = s.z + s.len
+}
+function buildSpeedLines() {
+  const M = 80
+  speedPos = new Float32Array(M * 6)
+  streaks = []
+  for (let i = 0; i < M; i++) {
+    const s = spawnStreak()
+    streaks.push(s)
+    writeStreak(i, s)
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(speedPos, 3))
+  const mat = new THREE.LineBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0,
+    fog: false, depthWrite: false, blending: THREE.AdditiveBlending,
+  })
+  speedLines = new THREE.LineSegments(geo, mat)
+  speedLines.frustumCulled = false
+  scene.add(speedLines)
+}
+function updateSpeedLines(dz) {
+  if (!speedLines) return
+  // intensidad según velocidad del juego (13 → 30), con base visible desde el inicio
+  const norm = Math.max(0, Math.min(1, (speed - 13) / (30 - 13)))
+  speedLines.material.opacity = 0.14 + norm * 0.36
+  const k = 2.4 // más rápidas que el mundo → sensación de velocidad
+  for (let i = 0; i < streaks.length; i++) {
+    const s = streaks[i]
+    s.z += dz * k
+    if (s.z > 12) Object.assign(s, spawnStreak(true))
+    writeStreak(i, s)
+  }
+  speedLines.geometry.attributes.position.needsUpdate = true
+}
+
+// --- curvatura de "planeta": la vía se dobla hacia abajo con la distancia ---
+const CURVE = 0.0011
+function curveMaterial(mat) {
+  if (!mat || mat.userData.curved) return
+  mat.userData.curved = true
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uCurve = { value: CURVE }
+    shader.vertexShader = 'uniform float uCurve;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <project_vertex>',
+      '#include <project_vertex>\n  mvPosition.y -= uCurve * mvPosition.z * mvPosition.z;\n  gl_Position = projectionMatrix * mvPosition;'
+    )
+  }
+  mat.needsUpdate = true
+}
+function curveObject(obj) {
+  obj.traverse((o) => {
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(curveMaterial)
+  })
 }
 
 // sprite suave (círculo con degradado) para nubes/pájaros
@@ -635,7 +721,7 @@ function onResize() {
 }
 
 // ---------- spawn ----------
-function spawnPattern() {
+function spawnPattern(zBase = SPAWN_Z) {
   const free = [0, 1, 2]
   const blocked = new Set()
   const types = ['block', 'high', 'wall', 'train']
@@ -644,15 +730,15 @@ function spawnPattern() {
     const options = free.filter((l) => !blocked.has(l))
     const l = options[(Math.random() * options.length) | 0]
     const t = types[(Math.random() * types.length) | 0]
-    if (t === 'train') makeTrainChain(l)
-    else makeObstacle(l, t)
+    if (t === 'train') makeTrainChain(l, zBase)
+    else makeObstacle(l, t, zBase)
     blocked.add(l)
   }
   // monedas en un carril libre
   const openLanes = free.filter((l) => !blocked.has(l))
   if (openLanes.length) {
     const cl = openLanes[(Math.random() * openLanes.length) | 0]
-    for (let i = 0; i < 5; i++) makeCoin(cl, SPAWN_Z - i * 2.2)
+    for (let i = 0; i < 5; i++) makeCoin(cl, zBase - i * 2.2)
   }
 }
 
@@ -679,6 +765,13 @@ function tick() {
 
   speed = Math.min(30, speed + dt * 0.4)
   const dz = speed * dt
+  updateSpeedLines(dz)
+
+  // entrada: el personaje corre desde detrás hasta su posición; luego das control
+  if (intro) {
+    player.position.z += (0 - player.position.z) * Math.min(1, dt * 3.2)
+    if (player.position.z < 0.2) { player.position.z = 0; intro = false }
+  }
 
   // score
   scoreF += dz * 1.1
@@ -693,19 +786,21 @@ function tick() {
     }
   }
 
-  // spawn
-  spawnAcc += dz
-  if (spawnAcc >= nextGap) {
-    spawnAcc = 0
-    nextGap = 16 + Math.random() * 10
-    spawnPattern()
+  // spawn (no genera obstáculos mientras entra el personaje)
+  if (!intro) {
+    spawnAcc += dz
+    if (spawnAcc >= nextGap) {
+      spawnAcc = 0
+      nextGap = 16 + Math.random() * 10
+      spawnPattern()
+    }
   }
 
   // jugador: carril — snap rápido; tras saltar espera un instante (salto inclinado)
   targetX = LANES[lane]
   if (lateralHold > 0) lateralHold -= dt
   if (lateralHold <= 0) {
-    player.position.x += (targetX - player.position.x) * Math.min(1, dt * 24)
+    player.position.x += (targetX - player.position.x) * Math.min(1, dt * 32)
   }
   player.rotation.z = (targetX - player.position.x) * 0.28
 
@@ -724,18 +819,25 @@ function tick() {
     } else if (o.type === 'block') {
       if (player.position.y < 0.85) sideHit = true                                   // hay que saltarlo
     } else if (o.type === 'high') {
-      if (!sliding) sideHit = true                                                   // hay que deslizarse
+      // choca solo si el cuerpo solapa la banda real de la valla
+      // (deslizar agacha la cabeza; saltar desde un tren te pasa por encima)
+      const headTop = player.position.y + (sliding ? 0.8 : 1.7)
+      if (player.position.y < HIGH_TOP && headTop > HIGH_BOTTOM) sideHit = true
     } else {
       // muro: solo choca si estás dentro de su volumen; por encima (saltando desde un tren) pasa
       if (player.position.y < WALL_TOP - 0.2) sideHit = true
     }
   }
-  if (sideHit) return gameOver()
+  if (sideHit && !intro) return gameOver()
 
   // salto / gravedad con suelo variable
   if (jumpBuffer > 0) jumpBuffer -= dt
+  if (coyoteT > 0) coyoteT -= dt
   if (!grounded) {
-    vy -= GRAVITY * dt
+    // altura fija siempre; mantener salto flota en el pico (más distancia, misma altura)
+    let g = GRAVITY
+    if (jumpHeld && vy < 1.2 && hangT < HANG_MAX) { g = GRAVITY * 0.15; hangT += dt }
+    vy -= g * dt
     player.position.y += vy * dt
     if (player.position.y <= floorY) {
       player.position.y = floorY
@@ -749,14 +851,15 @@ function tick() {
     player.position.y = floorY            // subió al techo del vagón
   } else if (floorY < player.position.y - 0.01) {
     grounded = false                       // salió del borde → cae
+    coyoteT = COYOTE                       // aún puedes saltar un instante
   } else {
     player.position.y = floorY
   }
 
-  // slide
+  // slide (dura al menos SLIDE_TIME; si mantienes la tecla, sigue hasta soltar)
   if (sliding) {
     slideT -= dt
-    if (slideT <= 0) { sliding = false; if (grounded) fadeTo('run') }
+    if (slideT <= 0 && !slideHeld) { sliding = false; if (grounded) fadeTo('run') }
   }
 
   // animación (skinned)
@@ -794,22 +897,27 @@ function tick() {
 
 // ---------- acciones ----------
 function moveLane(d) {
-  if (phase.value !== 'playing') return
+  if (phase.value !== 'playing' || intro) return
   lane = Math.max(0, Math.min(2, lane + d))
 }
 function jump() {
-  if (phase.value !== 'playing') return
-  if (!grounded) { jumpBuffer = JUMP_BUFFER; return } // cayendo: guarda la pulsación
+  if (phase.value !== 'playing' || intro) return
+  // en el aire sin margen de coyote: guarda la pulsación para el aterrizaje
+  if (!grounded && coyoteT <= 0) { jumpBuffer = JUMP_BUFFER; return }
   grounded = false
+  coyoteT = 0
   vy = JUMP_V
+  jumpHeld = true            // mantener la tecla = flota en el pico
+  hangT = 0
   lateralHold = LATERAL_HOLD // sube recto antes de desplazarse al lado
-  if (sliding) sliding = false
-  fadeTo('jump', true)
+  if (sliding) { sliding = false; slideHeld = false }
+  fadeTo('jump', true, 0.08) // crossfade rápido: el salto responde al instante
 }
-function slide() {
-  if (phase.value !== 'playing' || sliding) return
+function slide(hold = false) {
+  if (phase.value !== 'playing' || intro || sliding) return
   if (!grounded) { player.position.y = 0; grounded = true; vy = 0 }
   sliding = true
+  slideHeld = hold           // si viene de mantener tecla, sigue hasta soltar
   slideT = SLIDE_TIME
   fadeTo('slide', true)
 }
@@ -847,6 +955,11 @@ function resetWorld() {
   sliding = false
   jumpBuffer = 0
   lateralHold = 0
+  coyoteT = 0
+  slideHeld = false
+  jumpHeld = false
+  hangT = 0
+  intro = false
   dying = false
   deathTimer = 0
   fadeTo('run')
@@ -871,6 +984,7 @@ async function selectCharacter(id) {
   }
   playerParts = makePlayer()
   player = playerParts.g
+  curveObject(player)
   startCountdown()
 }
 
@@ -883,6 +997,11 @@ function startCountdown() {
       clearInterval(iv)
       phase.value = 'playing'
       running = true
+      // entrada: aparece detrás de cámara y corre hacia su sitio
+      intro = true
+      player.position.z = 13
+      // primer obstáculo ya presente a media distancia (se ve venir, no aparece de golpe)
+      spawnPattern(-68)
       clock.getDelta() // descartar delta acumulado
     }
   }, 700)
@@ -903,13 +1022,22 @@ function exit() {
 
 // ---------- input ----------
 function onKey(e) {
+  if (e.repeat) return // ignora auto-repeat: cada pulsación = una acción
   const k = e.key.toLowerCase()
   if (k === 'arrowleft' || k === 'a') moveLane(-1)
   else if (k === 'arrowright' || k === 'd') moveLane(1)
   else if (k === 'arrowup' || k === 'w' || k === ' ') { e.preventDefault(); jump() }
-  else if (k === 'arrowdown' || k === 's') slide()
+  else if (k === 'arrowdown' || k === 's') slide(true)
   else if (k === 'escape') { if (phase.value === 'playing') togglePause() }
   else if (k === 'p') togglePause()
+}
+function onKeyUp(e) {
+  const k = e.key.toLowerCase()
+  if (k === 'arrowup' || k === 'w' || k === ' ') {
+    jumpHeld = false // soltar: termina la flotación → cae
+  } else if (k === 'arrowdown' || k === 's') {
+    slideHeld = false // soltar: termina el slide (respeta el mínimo)
+  }
 }
 let tsx = 0, tsy = 0, tsMoved = false
 function onTouchStart(e) {
@@ -930,10 +1058,20 @@ onMounted(async () => {
   document.body.style.overflow = 'hidden'
   init()
   window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKeyUp)
   try {
     await loadProps()
   } catch (e) {
     console.error('Error cargando modelos', e)
+  }
+  // curvar todos los materiales de props/edificios (compartidos por los clones)
+  Object.values(models).forEach(curveObject)
+  buildingSet.forEach(curveObject)
+  // banda vertical real de la valla 'high' (se coloca en y=0, sin escala)
+  if (models.obs_high) {
+    const hb = new THREE.Box3().setFromObject(models.obs_high)
+    HIGH_BOTTOM = hb.min.y
+    HIGH_TOP = hb.max.y
   }
   buildChunks()
   tick()
@@ -944,6 +1082,7 @@ onBeforeUnmount(() => {
   running = false
   cancelAnimationFrame(raf)
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('resize', onResize)
   document.body.style.overflow = ''
   renderer?.dispose()
@@ -1035,6 +1174,22 @@ onBeforeUnmount(() => {
       <div class="rg-actions">
         <button class="rg-cta" @click="restart">Jugar de nuevo</button>
         <button class="rg-cta ghost" @click="exit">Salir</button>
+      </div>
+    </div>
+
+    <!-- leyenda de teclas (cómo se juega) -->
+    <div class="rg-keys" v-show="phase === 'playing' || phase === 'countdown'">
+      <div class="rg-keyrow">
+        <kbd class="rg-key">←</kbd><kbd class="rg-key">→</kbd>
+        <span class="rg-keylbl">Carril</span>
+      </div>
+      <div class="rg-keyrow">
+        <kbd class="rg-key">↑</kbd>
+        <span class="rg-keylbl">Saltar · mantener flota</span>
+      </div>
+      <div class="rg-keyrow">
+        <kbd class="rg-key">↓</kbd>
+        <span class="rg-keylbl">Deslizar · mantener sigue</span>
       </div>
     </div>
 
@@ -1368,5 +1523,52 @@ onBeforeUnmount(() => {
 
 @media (hover: none) and (pointer: coarse) {
   .rg-touch { display: flex; }
+}
+
+/* leyenda de teclas: bordes, transparente, blur */
+.rg-keys {
+  position: absolute;
+  bottom: clamp(1.2rem, 4vw, 2.2rem);
+  left: clamp(1.2rem, 4vw, 2.2rem);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.rg-keyrow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.rg-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.1rem;
+  height: 2.1rem;
+  padding: 0 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+}
+.rg-keylbl {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+/* en táctil se usan los botones redondos, no la leyenda de teclado */
+@media (hover: none) and (pointer: coarse) {
+  .rg-keys { display: none; }
 }
 </style>
