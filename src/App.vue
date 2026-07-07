@@ -25,6 +25,9 @@ import GradualBlur from './components/GradualBlur.vue'
 const root = ref(null)
 useScrollReveal(root)
 
+// móvil: sin las secciones 3D pesadas (astronauta / gafas VR)
+const isMobile = window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 820
+
 const progress = ref(0)
 const scrolled = ref(false)
 const lenis = ref(null)
@@ -112,12 +115,12 @@ onBeforeUnmount(() => {
       <ScrollText />
       <BannerShowcase />
       <ParallaxGallery />
-      <Scene3D />
+      <Scene3D v-if="!isMobile" />
       <Capabilities />
       <HorizontalReel />
       <AboutSection />
       <HyperScroll />
-      <VRSection />
+      <VRSection v-if="!isMobile" />
       <GamesSection />
       <ContactSection />
     </main>

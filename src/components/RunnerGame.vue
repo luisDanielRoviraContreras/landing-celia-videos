@@ -20,6 +20,8 @@ const buildingSet = [] // edificio1..7 (modelos aleatorios de /game)
 // móvil: baja resolución/sombra/partículas para que fluya
 const IS_MOBILE = typeof window !== 'undefined' &&
   (window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 820)
+// modo LITE (móvil): primitivas flat, sin GLB/texturas/sombras/curva
+const LITE = IS_MOBILE
 
 const LANES = [-2.3, 0, 2.3]
 const GRAVITY = 34
@@ -86,6 +88,7 @@ let jumpBuffer = 0        // pulsación de salto guardada mientras estás en el 
 let lateralHold = 0      // congela el movimiento lateral justo tras saltar (salto inclinado)
 let intro = false        // entrada: el personaje corre hacia la escena antes de controlar
 let coyoteT = 0          // margen de salto tras salir de un borde
+let playerMesh = null    // caja del jugador en modo LITE (para squash al deslizar)
 // banda vertical real de la valla 'high' (medida del modelo al cargar)
 let HIGH_BOTTOM = 1.0
 let HIGH_TOP = 2.6
@@ -263,6 +266,7 @@ function buildBuildings(g) {
 }
 
 function makeChunk(z) {
+  if (LITE) return makeChunkLite(z)
   const g = new THREE.Group()
   g.position.z = z
 
@@ -340,6 +344,7 @@ function makeChunk(z) {
 }
 
 function dressChunk(g) {
+  if (LITE) return // los bloques del chunk LITE son estáticos
   buildBuildings(g) // edificios aleatorios nuevos en cada reciclaje
   // reubica tren de escenario y decide si aparece (~35%)
   const st = g.userData.sceneryTrain
@@ -372,6 +377,7 @@ function flattenRootXZ(clip) {
 }
 
 function makePlayer() {
+  if (LITE) return makePlayerLite()
   const g = new THREE.Group()
   const model = charBase
   model.rotation.y = Math.PI // frente hacia -z (corremos alejándonos de la cámara)
@@ -403,8 +409,22 @@ function makePlayer() {
   return { g }
 }
 
+// jugador LITE: caja de color, sin animaciones
+const PLAYER_H = 1.6
+function makePlayerLite() {
+  const g = new THREE.Group()
+  const accent = selectedChar.value === 2 ? 0xf5c518 : 0xff4d4d
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, PLAYER_H, 0.5), flatMat(accent))
+  mesh.position.y = PLAYER_H / 2
+  g.add(mesh)
+  scene.add(g)
+  playerMesh = mesh
+  return { g }
+}
+
 // transición suave entre animaciones
 function fadeTo(name, once = false, fade = 0.15) {
+  if (LITE) return
   const next = actions[name]
   if (!next || next === currentAction) return
   next.reset()
@@ -420,6 +440,7 @@ const OBS_HALF = { block: 0.4, high: 0.35, wall: 0.3, train: OBS_TRAIN_HALF }
 const BLOCK_LIFT = 0.55 // obstaculo-saltar centrado (minY -0.55) → base al suelo
 
 function makeObstacle(laneIdx, type, z = SPAWN_Z) {
+  if (LITE) return makeObstacleLite(laneIdx, type, z)
   const mesh = models[OBS_KEY[type]].clone(true)
   mesh.traverse((o) => { if (o.isMesh) o.castShadow = true })
   mesh.position.x = LANES[laneIdx]
@@ -446,11 +467,76 @@ function makeTrainChain(laneIdx, zBase = SPAWN_Z) {
 }
 
 function makeCoin(laneIdx, z) {
-  const m = models.coin.clone(true)
-  m.scale.setScalar(COIN_SCALE)
+  let m
+  if (LITE) {
+    m = new THREE.Mesh(
+      new THREE.CircleGeometry(0.42, 20),
+      new THREE.MeshBasicMaterial({ color: 0xffd23d, side: THREE.DoubleSide })
+    )
+  } else {
+    m = models.coin.clone(true)
+    m.scale.setScalar(COIN_SCALE)
+  }
   m.position.set(LANES[laneIdx], 1, z)
   scene.add(m)
   coinsPool.push({ mesh: m, laneIdx, taken: false })
+}
+
+// ---------- primitivas LITE (móvil): mundo de bloques flat, sin texturas ----------
+function flatMat(color) {
+  return new THREE.MeshLambertMaterial({ color })
+}
+function makeChunkLite(z) {
+  const g = new THREE.Group()
+  g.position.z = z
+  // suelo plano
+  const ground = new THREE.Mesh(new THREE.BoxGeometry(9, 0.5, CHUNK_LEN), flatMat(0x17171f))
+  ground.position.y = -0.25
+  g.add(ground)
+  // marcas de carril (tiras finas)
+  for (const lx of LANES) {
+    const strip = new THREE.Mesh(
+      new THREE.BoxGeometry(1.4, 0.04, CHUNK_LEN),
+      new THREE.MeshBasicMaterial({ color: 0x24242e })
+    )
+    strip.position.set(lx, 0.01, 0)
+    g.add(strip)
+  }
+  // muros/bloques laterales (edificios simplificados)
+  const palette = [0x2a2540, 0x3a2a2a, 0x203040, 0x2e2440]
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const hgt = 4 + Math.random() * 12
+      const b = new THREE.Mesh(
+        new THREE.BoxGeometry(3 + Math.random() * 2, hgt, 3 + Math.random() * 3),
+        flatMat(palette[(Math.random() * palette.length) | 0])
+      )
+      b.position.set(side * (7 + Math.random() * 2), hgt / 2, -CHUNK_LEN / 2 + i * (CHUNK_LEN / 3) + 3)
+      g.add(b)
+    }
+  }
+  scene.add(g)
+  return g
+}
+function makeObstacleLite(laneIdx, type, z) {
+  let geo, y, halfd, color
+  if (type === 'train') {
+    halfd = OBS_TRAIN_HALF; const hgt = TRAIN_TOP
+    geo = new THREE.BoxGeometry(1.7, hgt, halfd * 2); y = hgt / 2; color = 0xff5c38
+  } else if (type === 'wall') {
+    halfd = 0.3; const hgt = WALL_TOP
+    geo = new THREE.BoxGeometry(1.9, hgt, 0.6); y = hgt / 2; color = 0x7b5cff
+  } else if (type === 'block') {
+    halfd = 0.4; const hgt = 1.0
+    geo = new THREE.BoxGeometry(1.6, hgt, 0.8); y = hgt / 2; color = 0xd6ff3f
+  } else { // high: barra elevada (agacharse por debajo)
+    halfd = 0.35; const hgt = HIGH_TOP - HIGH_BOTTOM
+    geo = new THREE.BoxGeometry(2.2, hgt, 0.7); y = (HIGH_TOP + HIGH_BOTTOM) / 2; color = 0xff9ec4
+  }
+  const mesh = new THREE.Mesh(geo, flatMat(color))
+  mesh.position.set(LANES[laneIdx], y, z)
+  scene.add(mesh)
+  obstacles.push({ mesh, laneIdx, type, halfDepth: halfd, passed: false })
 }
 
 // ---------- init ----------
@@ -460,7 +546,7 @@ function init() {
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 1.5 : 2))
   renderer.setSize(w, h)
-  renderer.shadowMap.enabled = true
+  renderer.shadowMap.enabled = !LITE
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -471,40 +557,45 @@ function init() {
   // fondo con degradado a negro; la niebla funde la distancia al horizonte
   scene.background = backdropTexture()
   scene.fog = new THREE.Fog(0x0a0714, 60, 150)
-  // acera de cemento con degradado a negro (compartida por todos los chunks)
-  pavementMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 })
-  pavementGeo = makePavementGeo()
-  // material de tierra compartido, con textura repetida a lo largo de la vía
-  const dirtTex = dirtTexture()
-  dirtTex.repeat.set(2, CHUNK_LEN / 6)
-  groundMat = new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 1 })
-  curveMaterial(groundMat)
-  curveMaterial(pavementMat)
+
+  if (!LITE) {
+    // acera de cemento con degradado a negro (compartida por todos los chunks)
+    pavementMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 })
+    pavementGeo = makePavementGeo()
+    // material de tierra compartido, con textura repetida a lo largo de la vía
+    const dirtTex = dirtTexture()
+    dirtTex.repeat.set(2, CHUNK_LEN / 6)
+    groundMat = new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 1 })
+    curveMaterial(groundMat)
+    curveMaterial(pavementMat)
+  }
 
   camera = new THREE.PerspectiveCamera(62, w / h, 0.1, 400)
   camera.position.set(0, 4.6, 8)
   camera.lookAt(0, 1.4, -6)
 
-  const hemi = new THREE.HemisphereLight(0xfff4e0, 0xff9ec4, 1.5)
+  const hemi = new THREE.HemisphereLight(0xfff4e0, 0xff9ec4, LITE ? 1.9 : 1.5)
   scene.add(hemi)
   const dir = new THREE.DirectionalLight(0xffffff, 2.1)
   dir.position.set(-8, 18, 6)
-  // target adelante del jugador para que la sombra cubra todo el tramo visible
-  dir.target.position.set(0, 0, -10)
-  scene.add(dir.target)
-  dir.castShadow = true
-  dir.shadow.mapSize.set(IS_MOBILE ? 1024 : 2048, IS_MOBILE ? 1024 : 2048)
-  dir.shadow.camera.near = 1
-  dir.shadow.camera.far = 110
-  dir.shadow.camera.left = -22
-  dir.shadow.camera.right = 22
-  dir.shadow.camera.top = 44
-  dir.shadow.camera.bottom = -44
-  dir.shadow.bias = -0.0004
-  dir.shadow.normalBias = 0.02
+  if (!LITE) {
+    // target adelante del jugador para que la sombra cubra todo el tramo visible
+    dir.target.position.set(0, 0, -10)
+    scene.add(dir.target)
+    dir.castShadow = true
+    dir.shadow.mapSize.set(IS_MOBILE ? 1024 : 2048, IS_MOBILE ? 1024 : 2048)
+    dir.shadow.camera.near = 1
+    dir.shadow.camera.far = 110
+    dir.shadow.camera.left = -22
+    dir.shadow.camera.right = 22
+    dir.shadow.camera.top = 44
+    dir.shadow.camera.bottom = -44
+    dir.shadow.bias = -0.0004
+    dir.shadow.normalBias = 0.02
+  }
   scene.add(dir)
 
-  buildSky()
+  if (!LITE) buildSky()
   buildSpeedLines()
 
   clock = new THREE.Clock()
@@ -671,6 +762,7 @@ const charList = Object.entries(CHARACTERS).map(([id, c]) => ({ id: Number(id), 
 
 // carga props + edificios (sin personaje)
 function loadProps() {
+  if (LITE) { HIGH_BOTTOM = 1.0; HIGH_TOP = 2.3; return Promise.resolve() }
   const loader = makeLoader()
   const files = {
     coin: '/game/coin_opt.glb',
@@ -695,6 +787,7 @@ function loadProps() {
 
 // carga el personaje elegido (run / jump / slide / death)
 function loadCharacter(id) {
+  if (LITE) return Promise.resolve() // sin GLB en móvil
   const cfg = CHARACTERS[id]
   const loader = makeLoader()
   const cf = {
@@ -866,6 +959,13 @@ function tick() {
     if (slideT <= 0 && !slideHeld) { sliding = false; if (grounded) fadeTo('run') }
   }
 
+  // LITE: aplasta la caja al deslizar (sustituye a la animación)
+  if (LITE && playerMesh) {
+    const sq = sliding ? 0.5 : 1
+    playerMesh.scale.y = sq
+    playerMesh.position.y = (PLAYER_H / 2) * sq
+  }
+
   // animación (skinned)
   if (mixer) mixer.update(dt)
 
@@ -957,6 +1057,7 @@ function resetWorld() {
   vy = 0
   grounded = true
   sliding = false
+  if (LITE && playerMesh) { playerMesh.scale.y = 1; playerMesh.position.y = PLAYER_H / 2 }
   jumpBuffer = 0
   lateralHold = 0
   coyoteT = 0
@@ -988,7 +1089,7 @@ async function selectCharacter(id) {
   }
   playerParts = makePlayer()
   player = playerParts.g
-  curveObject(player)
+  if (!LITE) curveObject(player)
   startCountdown()
 }
 
