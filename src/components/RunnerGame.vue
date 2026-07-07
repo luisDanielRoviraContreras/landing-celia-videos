@@ -88,7 +88,6 @@ let jumpBuffer = 0        // pulsación de salto guardada mientras estás en el 
 let lateralHold = 0      // congela el movimiento lateral justo tras saltar (salto inclinado)
 let intro = false        // entrada: el personaje corre hacia la escena antes de controlar
 let coyoteT = 0          // margen de salto tras salir de un borde
-let playerMesh = null    // caja del jugador en modo LITE (para squash al deslizar)
 // banda vertical real de la valla 'high' (medida del modelo al cargar)
 let HIGH_BOTTOM = 1.0
 let HIGH_TOP = 2.6
@@ -377,7 +376,6 @@ function flattenRootXZ(clip) {
 }
 
 function makePlayer() {
-  if (LITE) return makePlayerLite()
   const g = new THREE.Group()
   const model = charBase
   model.rotation.y = Math.PI // frente hacia -z (corremos alejándonos de la cámara)
@@ -409,22 +407,8 @@ function makePlayer() {
   return { g }
 }
 
-// jugador LITE: caja de color, sin animaciones
-const PLAYER_H = 1.6
-function makePlayerLite() {
-  const g = new THREE.Group()
-  const accent = selectedChar.value === 2 ? 0xf5c518 : 0xff4d4d
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, PLAYER_H, 0.5), flatMat(accent))
-  mesh.position.y = PLAYER_H / 2
-  g.add(mesh)
-  scene.add(g)
-  playerMesh = mesh
-  return { g }
-}
-
 // transición suave entre animaciones
 function fadeTo(name, once = false, fade = 0.15) {
-  if (LITE) return
   const next = actions[name]
   if (!next || next === currentAction) return
   next.reset()
@@ -519,22 +503,38 @@ function makeChunkLite(z) {
   return g
 }
 function makeObstacleLite(laneIdx, type, z) {
-  let geo, y, halfd, color
-  if (type === 'train') {
-    halfd = OBS_TRAIN_HALF; const hgt = TRAIN_TOP
-    geo = new THREE.BoxGeometry(1.7, hgt, halfd * 2); y = hgt / 2; color = 0xff5c38
-  } else if (type === 'wall') {
-    halfd = 0.3; const hgt = WALL_TOP
-    geo = new THREE.BoxGeometry(1.9, hgt, 0.6); y = hgt / 2; color = 0x7b5cff
-  } else if (type === 'block') {
-    halfd = 0.4; const hgt = 1.0
-    geo = new THREE.BoxGeometry(1.6, hgt, 0.8); y = hgt / 2; color = 0xd6ff3f
-  } else { // high: barra elevada (agacharse por debajo)
-    halfd = 0.35; const hgt = HIGH_TOP - HIGH_BOTTOM
-    geo = new THREE.BoxGeometry(2.2, hgt, 0.7); y = (HIGH_TOP + HIGH_BOTTOM) / 2; color = 0xff9ec4
+  let mesh, halfd
+  if (type === 'high') {
+    // barra elevada + postes laterales → se ve el hueco por debajo
+    halfd = 0.35
+    const g = new THREE.Group()
+    const barH = HIGH_TOP - HIGH_BOTTOM
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(2.2, barH, 0.5), flatMat(0xff9ec4))
+    bar.position.y = (HIGH_TOP + HIGH_BOTTOM) / 2
+    g.add(bar)
+    for (const sx of [-1.05, 1.05]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.28, HIGH_TOP, 0.5), flatMat(0xd45c86))
+      post.position.set(sx, HIGH_TOP / 2, 0)
+      g.add(post)
+    }
+    mesh = g
+  } else {
+    let geo, y, color
+    if (type === 'train') {
+      halfd = OBS_TRAIN_HALF; const hgt = TRAIN_TOP
+      geo = new THREE.BoxGeometry(1.7, hgt, halfd * 2); y = hgt / 2; color = 0xff5c38
+    } else if (type === 'wall') {
+      halfd = 0.3; const hgt = WALL_TOP
+      geo = new THREE.BoxGeometry(1.9, hgt, 0.6); y = hgt / 2; color = 0x7b5cff
+    } else { // block
+      halfd = 0.4; const hgt = 1.0
+      geo = new THREE.BoxGeometry(1.6, hgt, 0.8); y = hgt / 2; color = 0xd6ff3f
+    }
+    mesh = new THREE.Mesh(geo, flatMat(color))
+    mesh.position.y = y
   }
-  const mesh = new THREE.Mesh(geo, flatMat(color))
-  mesh.position.set(LANES[laneIdx], y, z)
+  mesh.position.x = LANES[laneIdx]
+  mesh.position.z = z
   scene.add(mesh)
   obstacles.push({ mesh, laneIdx, type, halfDepth: halfd, passed: false })
 }
@@ -787,7 +787,6 @@ function loadProps() {
 
 // carga el personaje elegido (run / jump / slide / death)
 function loadCharacter(id) {
-  if (LITE) return Promise.resolve() // sin GLB en móvil
   const cfg = CHARACTERS[id]
   const loader = makeLoader()
   const cf = {
@@ -959,13 +958,6 @@ function tick() {
     if (slideT <= 0 && !slideHeld) { sliding = false; if (grounded) fadeTo('run') }
   }
 
-  // LITE: aplasta la caja al deslizar (sustituye a la animación)
-  if (LITE && playerMesh) {
-    const sq = sliding ? 0.5 : 1
-    playerMesh.scale.y = sq
-    playerMesh.position.y = (PLAYER_H / 2) * sq
-  }
-
   // animación (skinned)
   if (mixer) mixer.update(dt)
 
@@ -1057,7 +1049,6 @@ function resetWorld() {
   vy = 0
   grounded = true
   sliding = false
-  if (LITE && playerMesh) { playerMesh.scale.y = 1; playerMesh.position.y = PLAYER_H / 2 }
   jumpBuffer = 0
   lateralHold = 0
   coyoteT = 0
