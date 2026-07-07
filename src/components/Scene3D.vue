@@ -410,7 +410,7 @@ onBeforeUnmount(() => {
   height: 320vh;
   border-top: 1px solid var(--line);
   background:
-    radial-gradient(60% 50% at 50% 0%, rgba(123, 92, 255, 0.08), transparent 70%),
+    linear-gradient(180deg, rgba(123, 92, 255, 0.06), transparent 22%),
     var(--bg);
 }
 

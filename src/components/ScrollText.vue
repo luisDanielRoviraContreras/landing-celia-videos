@@ -103,7 +103,7 @@ onBeforeUnmount(() => {
   height: 260vh;
   border-top: 1px solid var(--line);
   background:
-    radial-gradient(70% 60% at 50% 45%, rgba(214, 255, 63, 0.05), transparent 70%),
+    linear-gradient(180deg, rgba(214, 255, 63, 0.035), transparent 24%),
     var(--bg);
 }
 .pin {

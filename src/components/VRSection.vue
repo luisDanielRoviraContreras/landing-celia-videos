@@ -308,10 +308,20 @@ onBeforeUnmount(() => {
 .vr {
   position: relative;
   border-top: 1px solid var(--line);
-  background:
-    radial-gradient(55% 45% at 50% 10%, rgba(123, 92, 255, 0.1), transparent 70%),
-    radial-gradient(45% 40% at 80% 90%, rgba(214, 255, 63, 0.06), transparent 70%),
-    var(--bg);
+  background: var(--bg);
+}
+/* hairline de acento en el borde superior */
+.vr::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(680px, 70vw);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--violet), transparent);
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .sticky {
@@ -370,15 +380,30 @@ onBeforeUnmount(() => {
   padding-block: clamp(3rem, 8vh, 6rem);
 }
 .vr-card {
-  padding: 1.8rem;
-  background: rgba(17, 17, 20, 0.55);
+  position: relative;
+  padding: 1.9rem 1.8rem 2rem;
+  background: rgba(17, 17, 20, 0.5);
   backdrop-filter: blur(12px);
   border: 1px solid var(--line);
   border-radius: 16px;
+  overflow: hidden;
   opacity: 0;
   transform: translateY(40px);
   transition: transform 0.5s var(--ease), border-color 0.4s var(--ease),
-    opacity 0.5s var(--ease);
+    background 0.4s var(--ease), opacity 0.5s var(--ease);
+}
+/* línea de acento que crece en el borde superior al hover */
+.vr-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--violet));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.5s var(--ease);
 }
 .vr-card.in {
   opacity: 1;
@@ -386,19 +411,34 @@ onBeforeUnmount(() => {
 }
 .vr-card:hover {
   transform: translateY(-6px);
-  border-color: var(--accent);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(20, 20, 24, 0.6);
+}
+.vr-card:hover::before {
+  transform: scaleX(1);
 }
 .vr-card-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 0.85rem;
   color: var(--accent);
+  transition: border-color 0.4s var(--ease);
+}
+.vr-card:hover .vr-card-n {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .vr-card-t {
   font-family: var(--font-display);
   font-weight: 600;
   font-size: clamp(1.3rem, 2.4vw, 1.7rem);
-  margin: 0.6rem 0 0.7rem;
+  margin: 1rem 0 0.7rem;
 }
 .vr-card-d {
   color: var(--fg-dim);

@@ -20,6 +20,8 @@ const buildingSet = [] // edificio1..7 (modelos aleatorios de /game)
 const LANES = [-2.3, 0, 2.3]
 const GRAVITY = 34
 const JUMP_V = 13          // salto más alto (permite subir al techo del tren)
+const JUMP_BUFFER = 0.16   // ventana pre-aterrizaje para encadenar saltos
+const LATERAL_HOLD = 0.13  // al saltar: sube recto un instante antes de ir al lado (salto inclinado)
 const SLIDE_TIME = 0.62
 const CHUNK_LEN = 24
 const CHUNK_COUNT = 8
@@ -71,6 +73,8 @@ let vy = 0
 let grounded = true
 let sliding = false
 let slideT = 0
+let jumpBuffer = 0        // pulsación de salto guardada mientras estás en el aire
+let lateralHold = 0      // congela el movimiento lateral justo tras saltar (salto inclinado)
 
 // mundo
 let speed = 13
@@ -81,6 +85,9 @@ let over = false
 
 let pavementGeo = null
 let pavementMat = null
+let groundMat = null
+let birds = []          // pájaros animados en el cielo
+let worldT = 0          // tiempo acumulado para animaciones del cielo
 
 // ---------- helpers de construcción ----------
 // fondo: degradado del horizonte (tenue) a negro
@@ -123,6 +130,40 @@ function streetTexture() {
   for (let p = 0; p <= 256; p += 128) {
     g.beginPath(); g.moveTo(p, 0); g.lineTo(p, 256); g.stroke()
     g.beginPath(); g.moveTo(0, p); g.lineTo(256, p); g.stroke()
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+
+// textura de tierra/gravilla bajo los rieles
+function dirtTexture() {
+  const c = document.createElement('canvas')
+  c.width = 256
+  c.height = 256
+  const g = c.getContext('2d')
+  // base tierra (apagada)
+  g.fillStyle = '#8f6236'
+  g.fillRect(0, 0, 256, 256)
+  // manchas grandes (variación de tono suave)
+  const blobs = [['#82582e', 60], ['#9c6f42', 70], ['#785026', 50]]
+  for (const [col, n] of blobs) {
+    g.fillStyle = col
+    for (let i = 0; i < n; i++) {
+      const x = Math.random() * 256, y = Math.random() * 256, r = 6 + Math.random() * 22
+      g.globalAlpha = 0.14 + Math.random() * 0.18
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill()
+    }
+  }
+  g.globalAlpha = 1
+  // gravilla (puntos finos, bajo contraste)
+  for (let i = 0; i < 1200; i++) {
+    const x = Math.random() * 256, y = Math.random() * 256
+    const dark = Math.random() > 0.5
+    g.fillStyle = dark ? 'rgba(50,32,14,0.3)' : 'rgba(190,160,110,0.25)'
+    const s = Math.random() * 2 + 0.5
+    g.fillRect(x, y, s, s)
   }
   const t = new THREE.CanvasTexture(c)
   t.wrapS = t.wrapT = THREE.RepeatWrapping
@@ -217,7 +258,7 @@ function makeChunk(z) {
   // suelo de la vía (tierra)
   const ground = new THREE.Mesh(
     new THREE.BoxGeometry(9, 0.5, CHUNK_LEN),
-    new THREE.MeshStandardMaterial({ color: 0xc98a4a, roughness: 1 })
+    groundMat
   )
   ground.position.y = -0.25
   ground.receiveShadow = true
@@ -416,6 +457,10 @@ function init() {
   // acera de cemento con degradado a negro (compartida por todos los chunks)
   pavementMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 })
   pavementGeo = makePavementGeo()
+  // material de tierra compartido, con textura repetida a lo largo de la vía
+  const dirtTex = dirtTexture()
+  dirtTex.repeat.set(2, CHUNK_LEN / 6)
+  groundMat = new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 1 })
 
   camera = new THREE.PerspectiveCamera(62, w / h, 0.1, 400)
   camera.position.set(0, 4.6, 8)
@@ -425,19 +470,98 @@ function init() {
   scene.add(hemi)
   const dir = new THREE.DirectionalLight(0xffffff, 2.1)
   dir.position.set(-8, 18, 6)
+  // target adelante del jugador para que la sombra cubra todo el tramo visible
+  dir.target.position.set(0, 0, -10)
+  scene.add(dir.target)
   dir.castShadow = true
-  dir.shadow.mapSize.set(1024, 1024)
+  dir.shadow.mapSize.set(2048, 2048)
   dir.shadow.camera.near = 1
-  dir.shadow.camera.far = 60
-  dir.shadow.camera.left = -12
-  dir.shadow.camera.right = 12
-  dir.shadow.camera.top = 12
-  dir.shadow.camera.bottom = -12
+  dir.shadow.camera.far = 110
+  dir.shadow.camera.left = -22
+  dir.shadow.camera.right = 22
+  dir.shadow.camera.top = 44
+  dir.shadow.camera.bottom = -44
   dir.shadow.bias = -0.0004
+  dir.shadow.normalBias = 0.02
   scene.add(dir)
+
+  buildSky()
 
   clock = new THREE.Clock()
   window.addEventListener('resize', onResize)
+}
+
+// sprite suave (círculo con degradado) para nubes/pájaros
+function softSprite(draw) {
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')
+  draw(g)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+
+// estrellas, nubes y pájaros (fog:false para que la niebla no los borre)
+function buildSky() {
+  // --- estrellas ---
+  const N = 320
+  const pos = new Float32Array(N * 3)
+  for (let i = 0; i < N; i++) {
+    pos[i * 3] = (Math.random() * 2 - 1) * 90
+    pos[i * 3 + 1] = 24 + Math.random() * 55
+    pos[i * 3 + 2] = -20 - Math.random() * 150
+  }
+  const starGeo = new THREE.BufferGeometry()
+  starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  const starMat = new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.55, sizeAttenuation: true,
+    transparent: true, opacity: 0.9, fog: false, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+  scene.add(new THREE.Points(starGeo, starMat))
+
+  // --- nubes ---
+  const cloudTex = softSprite((g) => {
+    const grd = g.createRadialGradient(32, 32, 4, 32, 32, 32)
+    grd.addColorStop(0, 'rgba(210,180,255,0.9)')
+    grd.addColorStop(1, 'rgba(210,180,255,0)')
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64)
+  })
+  for (let i = 0; i < 7; i++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: cloudTex, transparent: true, opacity: 0.22, fog: false, depthWrite: false,
+    }))
+    s.position.set((Math.random() * 2 - 1) * 70, 30 + Math.random() * 20, -50 - Math.random() * 90)
+    const sc = 18 + Math.random() * 22
+    s.scale.set(sc, sc * 0.6, 1)
+    scene.add(s)
+  }
+
+  // --- pájaros ---
+  const birdTex = softSprite((g) => {
+    g.strokeStyle = '#0c0a12'; g.lineWidth = 6; g.lineCap = 'round'
+    g.beginPath(); g.moveTo(8, 40); g.lineTo(32, 24); g.lineTo(56, 40); g.stroke()
+  })
+  birds = []
+  for (let i = 0; i < 7; i++) {
+    const b = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: birdTex, transparent: true, opacity: 0.85, fog: false, depthWrite: false,
+    }))
+    const sc = 1.6 + Math.random() * 1.2
+    b.scale.set(sc, sc * 0.6, 1)
+    b.position.set((Math.random() * 2 - 1) * 40, 16 + Math.random() * 14, -35 - Math.random() * 70)
+    scene.add(b)
+    birds.push({ sprite: b, speed: 1.2 + Math.random() * 1.6, phase: Math.random() * 6.28, baseY: b.position.y })
+  }
+}
+
+function updateSky(t) {
+  for (const b of birds) {
+    b.sprite.position.x -= b.speed * 0.016
+    if (b.sprite.position.x < -46) b.sprite.position.x = 46
+    b.sprite.position.y = b.baseY + Math.sin(t * 2 + b.phase) * 0.6
+  }
 }
 
 function makeLoader() {
@@ -550,6 +674,8 @@ function tick() {
     return
   }
   const dt = Math.min(clock.getDelta(), 0.05)
+  worldT += dt
+  updateSky(worldT)
 
   speed = Math.min(30, speed + dt * 0.4)
   const dz = speed * dt
@@ -575,10 +701,13 @@ function tick() {
     spawnPattern()
   }
 
-  // jugador: carril
+  // jugador: carril — snap rápido; tras saltar espera un instante (salto inclinado)
   targetX = LANES[lane]
-  player.position.x += (targetX - player.position.x) * Math.min(1, dt * 13)
-  player.rotation.z = (targetX - player.position.x) * 0.25
+  if (lateralHold > 0) lateralHold -= dt
+  if (lateralHold <= 0) {
+    player.position.x += (targetX - player.position.x) * Math.min(1, dt * 24)
+  }
+  player.rotation.z = (targetX - player.position.x) * 0.28
 
   // mover obstáculos
   for (const o of obstacles) o.mesh.position.z += dz
@@ -604,6 +733,7 @@ function tick() {
   if (sideHit) return gameOver()
 
   // salto / gravedad con suelo variable
+  if (jumpBuffer > 0) jumpBuffer -= dt
   if (!grounded) {
     vy -= GRAVITY * dt
     player.position.y += vy * dt
@@ -611,7 +741,9 @@ function tick() {
       player.position.y = floorY
       grounded = true
       vy = 0
-      if (!sliding) fadeTo('run')
+      // ¿había un salto en cola? encadénalo al instante
+      if (jumpBuffer > 0) { jumpBuffer = 0; jump() }
+      else if (!sliding) fadeTo('run')
     }
   } else if (floorY > player.position.y + 0.01) {
     player.position.y = floorY            // subió al techo del vagón
@@ -666,9 +798,11 @@ function moveLane(d) {
   lane = Math.max(0, Math.min(2, lane + d))
 }
 function jump() {
-  if (phase.value !== 'playing' || !grounded) return
+  if (phase.value !== 'playing') return
+  if (!grounded) { jumpBuffer = JUMP_BUFFER; return } // cayendo: guarda la pulsación
   grounded = false
   vy = JUMP_V
+  lateralHold = LATERAL_HOLD // sube recto antes de desplazarse al lado
   if (sliding) sliding = false
   fadeTo('jump', true)
 }
@@ -711,6 +845,8 @@ function resetWorld() {
   vy = 0
   grounded = true
   sliding = false
+  jumpBuffer = 0
+  lateralHold = 0
   dying = false
   deathTimer = 0
   fadeTo('run')
@@ -846,14 +982,17 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- loading -->
-    <div v-if="phase === 'loading'" class="rg-overlay">
+    <div v-if="phase === 'loading'" class="rg-overlay rg-loading">
       <div class="rg-spinner" aria-hidden="true"></div>
       <p class="rg-loadtxt">Cargando…</p>
     </div>
 
     <!-- selección de personaje -->
     <div v-if="phase === 'select'" class="rg-overlay rg-select">
-      <p class="rg-eyebrow">Elige tu corredor</p>
+      <button class="rg-back" @click="exit" aria-label="Volver">
+        ← Volver
+      </button>
+      <p class="rg-eyebrow rg-select-title">Elige tu corredor</p>
       <div class="rg-chars">
         <button
           v-for="c in charList"
@@ -993,6 +1132,11 @@ onBeforeUnmount(() => {
   background: rgba(10, 10, 20, 0.55);
   backdrop-filter: blur(8px);
 }
+/* pantalla de carga: negro neto, sin blur */
+.rg-loading {
+  background: #000;
+  backdrop-filter: none;
+}
 .rg-overlay h3 {
   font-family: var(--font-display);
   font-size: clamp(2rem, 8vw, 3.5rem);
@@ -1009,18 +1153,53 @@ onBeforeUnmount(() => {
 .rg-loadtxt { color: rgba(255, 255, 255, 0.8); letter-spacing: 0.05em; }
 
 /* selección de personaje */
-.rg-select { gap: 2rem; }
+.rg-select { gap: 2.4rem; }
+.rg-back {
+  pointer-events: auto;
+  position: absolute;
+  top: clamp(1rem, 3vw, 2rem);
+  left: clamp(1rem, 3vw, 2rem);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 100px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+}
+.rg-back:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.55);
+  transform: translateX(-3px);
+}
+/* título de selección: blanco, bold, grande */
+.rg-select-title {
+  text-transform: none;
+  letter-spacing: -0.01em;
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.8rem, 5vw, 3rem);
+  line-height: 1;
+}
 .rg-chars {
   display: flex;
   flex-wrap: wrap;
-  gap: 1.4rem;
+  gap: 1.8rem;
   justify-content: center;
 }
 .rg-char {
   pointer-events: auto;
   position: relative;
   overflow: hidden;
-  width: clamp(150px, 40vw, 210px);
+  width: clamp(210px, 44vw, 300px);
   aspect-ratio: 3 / 4;
   display: flex;
   flex-direction: column;

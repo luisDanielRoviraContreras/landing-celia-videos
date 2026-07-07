@@ -68,9 +68,6 @@ onBeforeUnmount(() => {
     id="games"
     :style="{ '--gx': px + '%', '--gy': py + '%' }"
   >
-    <div class="games-grid" aria-hidden="true"></div>
-    <div class="games-glow" aria-hidden="true"></div>
-
     <div class="container games-inner">
       <header class="games-head">
         <p class="eyebrow reveal">// Videojuegos</p>
@@ -144,35 +141,7 @@ onBeforeUnmount(() => {
   padding: clamp(5rem, 12vw, 10rem) 0;
   border-top: 1px solid var(--line);
   overflow: hidden;
-}
-
-/* grid cyberpunk de fondo */
-.games-grid {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-image: linear-gradient(var(--line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--line) 1px, transparent 1px);
-  background-size: 54px 54px;
-  mask-image: radial-gradient(120% 90% at 50% 30%, #000 30%, transparent 78%);
-  -webkit-mask-image: radial-gradient(120% 90% at 50% 30%, #000 30%, transparent 78%);
-}
-
-/* glow que sigue al puntero + tinte violeta/naranja de los personajes */
-.games-glow {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: radial-gradient(
-      520px circle at var(--gx) var(--gy),
-      rgba(214, 255, 63, 0.12),
-      transparent 60%
-    ),
-    radial-gradient(60% 55% at 22% 78%, rgba(123, 92, 255, 0.16), transparent 70%),
-    radial-gradient(55% 50% at 82% 26%, rgba(255, 92, 56, 0.12), transparent 72%);
-  transition: background 0.2s linear;
+  background: var(--bg);
 }
 
 .games-inner {
